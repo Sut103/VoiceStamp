@@ -7,7 +7,7 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-CONNECTION_TABLE = 'VoiceStampConnection'
+CONNECTION_TABLE = os.environ['TABLE_NAME']
 IMAGE_S3_BUCKET_NAME = '??????'
 S3_ENDPOINT_URL = f'https://{IMAGE_S3_BUCKET_NAME}.s3.ap-northeast-1.amazonaws.com'
 

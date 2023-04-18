@@ -6,7 +6,7 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-CONNECTION_TABLE = "VoiceStampConnection"
+CONNECTION_TABLE = os.environ['TABLE_NAME']
 
 
 def lambda_handler(event, context):

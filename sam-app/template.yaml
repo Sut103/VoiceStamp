@@ -1,42 +1,206 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  sam-app
 
-  Sample SAM Template for sam-app
 
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Parameters:
+  TableName:
+    Type: String
+    Default: 'VoiceStamp_connections'
+    MinLength: 3
+    MaxLength: 50
+    AllowedPattern: ^[A-Za-z_]+$
+    ConstraintDescription: 'Required. Can be characters and underscore only. No numbers or special characters allowed.'
+
+
 Globals:
   Function:
-    Timeout: 3
-    MemorySize: 128
+    Handler: lambda_function.lambda_handler
+    Runtime: python3.9
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref TableName
+
 
 Resources:
-  HelloWorldFunction:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+  VoiceStampWebSocket:
+    Type: AWS::ApiGatewayV2::Api
     Properties:
-      CodeUri: hello_world/
-      Handler: app.lambda_handler
-      Runtime: python3.9
-      Architectures:
-        - x86_64
-      Events:
-        HelloWorld:
-          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
-          Properties:
-            Path: /hello
-            Method: get
+      Name: VoiceStampWebSocket
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+      Tags: 
+        Product: VoiceStamp
+        
+  OnConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VoiceStampWebSocket
+      RouteKey: $connect
+      AuthorizationType: NONE
+      OperationName: OnConnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref OnConnectInteg
+
+  OnConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref VoiceStampWebSocket
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub:
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnConnectFunction.Arn}/invocations
+
+  OnConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: onconnect/
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref TableName
+      Tags: 
+        Product: VoiceStamp
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VoiceStampWebSocket
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref DisconnectInteg
+
+  DisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref VoiceStampWebSocket
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub:
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectFunction.Arn}/invocations
+
+  DisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: disconnect/
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref TableName
+      Tags: 
+        Product: VoiceStamp
+
+  SendVoiceRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref VoiceStampWebSocket
+      RouteKey: send_voice
+      AuthorizationType: NONE
+      OperationName: SendVocie
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref SendVoiceInteg
+
+  SendVoiceInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref VoiceStampWebSocket
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        Fn::Sub:
+            arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SendVoiceFunction.Arn}/invocations
+
+  SendVoiceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: send_voice/
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref TableName
+      - Statement:
+        - Effect: Allow
+          Action:
+          - 'execute-api:ManageConnections'
+          Resource:
+          - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${VoiceStampWebSocket}/*'
+      Tags: 
+        Product: VoiceStamp
+
+  Deployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+    - OnConnectRoute
+    - SendVoiceRoute
+    - DisconnectRoute
+    Properties:
+      ApiId: !Ref VoiceStampWebSocket
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: Prod
+      DeploymentId: !Ref Deployment
+      ApiId: !Ref VoiceStampWebSocket
+      AutoDeploy: true
+      Tags: 
+        Product: VoiceStamp
+
+  VoiceStampConnectionsTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey: 
+        Name: connectionId
+        Type: String
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      TableName: !Ref TableName
+      Tags: 
+        Product: VoiceStamp
+
+  OnConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - VoiceStampWebSocket
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OnConnectFunction
+      Principal: apigateway.amazonaws.com
+
+  DisconnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - VoiceStampWebSocket
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DisconnectFunction
+      Principal: apigateway.amazonaws.com
+
+  SendVoicePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - VoiceStampWebSocket
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SendVoiceFunction
+      Principal: apigateway.amazonaws.com
 
 Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
-  HelloWorldApi:
-    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
-  HelloWorldFunction:
-    Description: "Hello World Lambda Function ARN"
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
-    Description: "Implicit IAM Role created for Hello World function"
-    Value: !GetAtt HelloWorldFunctionRole.Arn
+  VoiceStampConnectionsTableArn:
+    Value: !GetAtt VoiceStampConnectionsTable.Arn
+
+  OnConnectFunctionArn:
+    Value: !GetAtt OnConnectFunction.Arn
+
+  DisconnectFunctionArn:
+    Value: !GetAtt DisconnectFunction.Arn
+
+  SendVoiceFunctionArn:
+    Value: !GetAtt SendVoiceFunction.Arn
+
+  WebSocketURI:
+    Value: !Join [ '', [ 'wss://', !Ref VoiceStampWebSocket, '.execute-api.',!Ref 'AWS::Region','.amazonaws.com/',!Ref 'Stage'] ]
