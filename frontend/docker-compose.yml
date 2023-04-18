@@ -1,0 +1,16 @@
+version: '3'
+
+volumes:
+  voicestamp-node-modules:
+
+services:
+  app:
+    image: node:18-bullseye-slim
+    container_name: voicestamp-frontend
+    working_dir: /app
+    tty: true
+    volumes:
+      - ./:/app
+      - voicestamp-node-modules:/app/node_modules
+    ports:
+      - 5173:5173
